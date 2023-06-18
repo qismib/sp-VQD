@@ -1,79 +1,59 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import json
 
-from exactsimulation import *
 from pVQD import *
+from exactsimulation import *
 
-from qiskit import QuantumCircuit
-from qiskit.quantum_info import SparsePauliOp, Operator, Statevector, Pauli
-from qiskit.primitives import Estimator
-from qiskit.visualization import circuit_drawer
+#physic sistem configuration
 
-
-N = 3 #Spins
-h = 1
-J = 1/4
-depth = 3 #ansatz depth
-l_rate = 0.05
-s = np.pi / 2
-dt = 0.05 #Time step
-shots = [800, 8000]
-
-#Setting initial parameters to '0'
-par  = [0]*(depth*N+depth*(N-1))
-dparev  = [0.01]*len(par)
-inter = np.linspace(0, 0.5, 10)
-
-expectation_values = {'X 800': [],'X 8000': [],'Z 800': [],'Z 8000': []}
-
-expectation_values['X 800'].append(expectation_X(depth , N, par, shots[0]))
-expectation_values['X 8000'].append(expectation_X(depth , N, par, shots[1]))
-expectation_values['Z 800'].append(expectation_Z(depth , N, par, shots[0]))
-expectation_values['Z 8000'].append(expectation_Z(depth , N, par, shots[1]))
-
-for t in inter:
-    L = 1
-    for i in range(100):
-        L = GlobalCostFunction(N, depth, dparev, par, J, h, dt)
-        dparev = Global_parameter_evolution(s, l_rate, N, depth, dparev, par, J, h, dt)
-
-        print("L: ",L)
-
-    for k in range(len(par)):
-        par[k] = par[k] + dparev[k]
-    print("Parameters: ",par)
-    print("------------------------")
-    expectation_values['X 800'].append(expectation_X(depth , N, par, shots[0]))
-    expectation_values['X 8000'].append(expectation_X(depth , N, par, shots[1]))
-    expectation_values['Z 800'].append(expectation_Z(depth , N, par, shots[0]))
-    expectation_values['Z 8000'].append(expectation_Z(depth , N, par, shots[1]))
+n_spins = 3
+depth = 3
+magnetic_fields = [1/4, 1]
 
 
-exact_x = exact_meas_of_X (N, J, h, inter)
-exact_z = exact_meas_of_Z (N, J, h, inter)
+#algorithm configuration
+s = np.pi/2
+learning_rate = 1
+time_step = 0.05
+n_time_steps = 40
+sim_config = ['global', 'shots']
+shots = 8000
+
+
+num_parameters = ((depth+1)*n_spins+depth*(n_spins-1))
+init_parameters = np.zeros(num_parameters)
+init_shift = np.ones(num_parameters)*0.01
 
 
 
+#running the algorithm
+algo = pVQD(n_spins,init_parameters, init_shift, depth, magnetic_fields)
+data = algo.run(time_step, n_time_steps, sim_config, shots, learning_rate, s)
+
+'''
+
+#simulating exact evolution
+inter = [i*time_step for i in range(n_time_steps+1)]
+exact_log = {"exact_x" : [], "exact_z": [],'n_Time_Steps': n_time_steps, 'time_step': time_step}
+exact_log["exact_x"] = exact_meas_of_X (n_spins, magnetic_fields[0], magnetic_fields[1], inter)
+exact_log["exact_z"] = exact_meas_of_Z (n_spins, magnetic_fields[0], magnetic_fields[1], inter)
 
 
+with open("data/exact_data_"+str(n_time_steps)+"_steps.dat", "w") as f:
+    json.dump(exact_log, f)
 
 
+'''
 
 
-
-
-
-
-
-
-
+'''
 #---------------------------------------------------
 #plotting result
 plt.figure(1)
 plt.subplot(211)
 plt.plot(inter, exact_x,linestyle="dashed",color="black",label="Exact")
-plt.plot(inter, expectation_values['X 8000'],color="C1",label="pVQD 8000 steps",linestyle="",marker=".")
-plt.plot(inter, expectation_values['X 800'],color="C0",label="pVQD 800 steps",linestyle="",marker=".")
+plt.errorbar(inter, par_results['X'], yerr = errors['X'], color="C1",label="pVQD",linestyle="",marker=".")
 
 plt.ylabel(r'$\langle\sigma_x\rangle$')
 plt.legend()
@@ -81,8 +61,7 @@ plt.grid()
 
 plt.subplot(212)
 plt.plot(inter, exact_z,linestyle="dashed",color="black",label="Exact")
-plt.plot(inter, expectation_values['Z 800'],color="C0",label="pVQD 800 steps",linestyle="",marker=".")
-plt.plot(inter, expectation_values['Z 8000'],color="C1",label="pVQD 8000 steps",linestyle="",marker=".")
+plt.errorbar(inter, par_results['Z'], yerr = errors['Z'],color="C1",label="pVQD",linestyle="",marker=".")
 
 plt.xlabel('time')
 plt.ylabel(r'$\langle\sigma_z\rangle$')
@@ -90,3 +69,4 @@ plt.ylabel(r'$\langle\sigma_z\rangle$')
 plt.legend()
 plt.grid()
 plt.show()
+'''

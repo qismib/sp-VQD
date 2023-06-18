@@ -1,12 +1,10 @@
 #Exact simulation
-
 import numpy as np
-import matplotlib.pyplot as plt
+import scipy.linalg as la
 
 from qiskit import QuantumCircuit
-from qiskit.quantum_info import SparsePauliOp, Operator, Statevector, Pauli
-from qiskit_aer.primitives import Estimator
-from qiskit.visualization import circuit_drawer
+from qiskit.quantum_info import SparsePauliOp, Statevector
+
 
 #definining Ising hamiltonian
 def H_Ising (n_spins, J, h):
@@ -17,11 +15,10 @@ def H_Ising (n_spins, J, h):
 
 #Creating exact evolution operator
 def U_Ising(n_spins, J, h, t):
-    import scipy.linalg as la
     H = H_Ising(n_spins, J, h).to_matrix()
     return la.expm(-1j*H*t)
 
-
+#measuring observables
 def exact_meas_of_X (n_spins, j, h, inter):
     exp_value =  []
 
@@ -36,7 +33,7 @@ def exact_meas_of_X (n_spins, j, h, inter):
     for t in inter:
         evolved_state =  U_Ising(n_spins, j, h, t) @ init_state
         measured_state = obs_mat @ evolved_state
-        exp_value.append((evolved_state.transpose().conjugate() @ measured_state)/n_spins)
+        exp_value.append((evolved_state.transpose().conjugate() @ measured_state).real/n_spins)
     return exp_value
 
 def exact_meas_of_Z (n_spins, j, h, inter):
@@ -53,5 +50,5 @@ def exact_meas_of_Z (n_spins, j, h, inter):
     for t in inter:
         evolved_state =  U_Ising(n_spins, j, h, t) @ init_state
         measured_state = obs_mat @ evolved_state
-        exp_value.append((evolved_state.transpose().conjugate() @ measured_state)/n_spins)
+        exp_value.append((evolved_state.transpose().conjugate() @ measured_state).real/n_spins)
     return exp_value
