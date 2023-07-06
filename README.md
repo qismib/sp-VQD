@@ -1,2 +1,2 @@
 # sp-VQD
-Shadows Variational Quantum Dynamics
+Shadows Projected Variational Quantum Dynamics
