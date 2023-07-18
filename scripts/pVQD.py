@@ -4,6 +4,7 @@ import json
 
 from exactsimulation import *
 from noise_model import *
+from ZNE_error_mitigation import *
 
 from qiskit import QuantumCircuit
 from qiskit.circuit import ParameterVector
@@ -13,12 +14,19 @@ from qiskit_aer.primitives import Estimator as AerEstimator
 from qiskit.providers.aer.noise import NoiseModel
 from qiskit_ibm_provider import IBMProvider
 from qiskit.providers.fake_provider import FakeManilaV2, FakeVigo
-
+from qiskit_aer import AerSimulator
 
 def ei(i, n):
     v = np.zeros(n)
     v[i] = 1.0
     return v[:]
+
+def Rzz (theta, q1, q2, n_spins):
+    qc = QuantumCircuit(n_spins)
+    qc.cnot(q1,q2)
+    qc.rz(theta,q2)
+    qc.cnot(q1,q2)
+    return qc
 
 #ansatz definition
 def ansatz(n_spins, par, depth):
@@ -33,7 +41,8 @@ def ansatz(n_spins, par, depth):
                 qc_ans.ry(par[count],i)
                 count += 1
         for j in range(n_spins-1):
-            qc_ans.rzz(par[count],j,j+1)
+            #qc_ans.rzz(par[count],j,j+1)
+            qc_ans = qc_ans.compose(Rzz(par[count],j, j+1, n_spins))
             count += 1
 
     if (depth%2 == 1):
@@ -120,43 +129,61 @@ class pVQD:
         return qc
 
 
-    def overlap_measurement(self, circuit, shifted_par,estimator, projector):
+    def overlap_measurement(self, circuit, shifted_par,estimator, projector, error_mitigation, shots):
         par = shifted_par+(self.parameters).tolist()
-        results = estimator.run(circuit, projector, par).result()
+        if not error_mitigation:
+            results = estimator.run(circuit, projector, par).result()
+        if error_mitigation == "ZNE":
+            results = zne_overlap(circuit, par, estimator, shots)
         return results
 
-    def measurements(self, estimator, sim_config):
+    def measurements(self, estimator, sim_config, error_mitigation, shots):
         result = []
         error_vec = []
         qc_z = QuantumCircuit(self.n_spins)
         qc_z = qc_z.compose(self.ansatz)
 
-        Z = SparsePauliOp.from_sparse_list([["Z", [i], 1] for i in range(self.n_spins)], self.n_spins)
-        job_meas = estimator.run(qc_z, Z, self.parameters).result()
-        result.append(job_meas.values[0]/self.n_spins)
+        if not error_mitigation:
+            Z = SparsePauliOp.from_sparse_list([["Z", [i], 1] for i in range(self.n_spins)], self.n_spins)
+            job_meas = estimator.run(qc_z, Z, self.parameters).result()
+            result.append(job_meas.values[0]/self.n_spins)
 
-        if sim_config[1] != 'noshots':
+        if error_mitigation=="ZNE":
+            #Measuring in the computational basis
+            zne_exp = zne_expectation(qc_z,self.parameters, estimator, shots)
+            result.append(zne_exp/self.n_spins)
+
+        if sim_config[1] != 'noshots' and not error_mitigation:
             meta = job_meas.metadata[0]
-            err = np.sqrt(meta['variance'].real/meta['shots'])
+            err = np.sqrt(meta['variance'].real/shots)
             error_vec.append(err)
         else:
             error_vec.append(0)
 
         qc_x = QuantumCircuit(self.n_spins)
         qc_x = qc_x.compose(self.ansatz)
-        X = SparsePauliOp.from_sparse_list([["X", [i], 1] for i in range(self.n_spins)], self.n_spins)
-        job_meas = estimator.run(qc_x, X, self.parameters).result()
-        result.append(job_meas.values[0]/self.n_spins)
-        if sim_config[1] != 'noshots':
+        if not error_mitigation:
+            X = SparsePauliOp.from_sparse_list([["X", [i], 1] for i in range(self.n_spins)], self.n_spins)
+            job_meas = estimator.run(qc_x, X, self.parameters).result()
+            result.append(job_meas.values[0]/self.n_spins)
+        if error_mitigation == "ZNE":
+            #Measuring base x
+            for i in range(self.n_spins):
+                qc_x.h(i)
+                qc_x.z(i)
+                zne_exp = zne_expectation(qc_x,self.parameters, estimator, shots)
+                result.append(zne_exp/self.n_spins)
+
+        if sim_config[1] != 'noshots' and not error_vec:
             meta = job_meas.metadata[0]
-            err = np.sqrt(meta['variance'].real/meta['shots'])
+            err = np.sqrt(meta['variance'].real/shots)
             error_vec.append(err)
         else:
             error_vec.append(0)
 
         return result, error_vec
 
-    def cost_and_gradient(self, circuit, estimator, projector,s, sim_config):
+    def cost_and_gradient(self, circuit, estimator, projector,s, sim_config, error_mitigation, shots):
 
         shifted_par = [(self.parameters+self.shift).tolist()]
         for i in range(self.num_parameters):
@@ -166,11 +193,15 @@ class pVQD:
         result = []
         error_vec = []
         for val in shifted_par:
-            overlap = self.overlap_measurement(circuit, val, estimator, projector)
-            result.append(1 - overlap.values[0].real)
-            if sim_config[1] != 'noshots':
+            overlap = self.overlap_measurement(circuit, val, estimator, projector, error_mitigation,shots)
+            if not error_mitigation:
+                result.append(1 - overlap.values[0].real)
+            if error_mitigation == "ZNE":
+                result.append(1-overlap)
+
+            if sim_config[1] != 'noshots' and not error_mitigation:
                 meta = overlap.metadata[0]
-                err = np.sqrt(meta['variance'].real/meta['shots'])
+                err = np.sqrt(meta['variance'].real/shots)
                 error_vec.append(err)
             else:
                 error_vec.append(0)
@@ -182,7 +213,7 @@ class pVQD:
 
         return E,g
 
-    def cost_and_gradient_spsa(self, circuit, estimator, projector, k, sim_config):
+    def cost_and_gradient_spsa(self, circuit, estimator, projector, k, sim_config, error_mitigation, shots):
         a = 0.16
         c = 0.1
         A = 1
@@ -203,14 +234,19 @@ class pVQD:
         result = []
         error_vec = []
         for val in shifted_par:
-            overlap = self.overlap_measurement(circuit, val, estimator, projector)
-            result.append(1 - overlap.values[0].real)
-            if sim_config[1] != 'noshots':
+            overlap = self.overlap_measurement(circuit, val, estimator, projector, error_mitigation, shots)
+            if not error_mitigation:
+                result.append(1 - overlap.values[0].real)
+            if error_mitigation == "ZNE":
+                result.append(1-overlap)
+
+            if sim_config[1] != 'noshots' and not error_mitigation:
                 meta = overlap.metadata[0]
-                err = np.sqrt(meta['variance']/meta['shots'])
+                err = np.sqrt(meta['variance'].real/shots)
                 error_vec.append(err)
             else:
                 error_vec.append(0)
+
 
         g = np.zeros(self.num_parameters)
         E = [result[0], error_vec[0]]
@@ -239,7 +275,7 @@ class pVQD:
         return self.shift - alpha, m, v
 
 
-    def run(self, time_step, n_time_steps, sim_config = ['global', 'noshots'], optimizer = 'gradient_descent', shots = 8000, ln=0.01, s = np.pi/2, max_iter = 100):
+    def run(self, time_step, n_time_steps, sim_config = ['global', 'noshots'], optimizer = 'gradient_descent', error_mitigation = None, shots = 8000, ln=0.01, s = np.pi/2, max_iter = 100):
 
         #global or local cost function
         if sim_config[0] == 'global':
@@ -257,18 +293,23 @@ class pVQD:
             estimator = Estimator()
         if sim_config[1] == 'shots':
             print("Simulating with "+ str(shots) +" shots.")
-            estimator = AerEstimator(run_options={"shots": shots}, approximation = True)
+
+            estimator = AerEstimator(run_options={"shots": shots}, approximation = False)
         if sim_config[1] == 'noise':
+            print("Simulating with noise and "+ str(shots) + " shots.")
             provider = IBMProvider()
             backend = provider.get_backend('ibm_lagos')
-            #backend = FakeVigo()
             noise_model = NoiseModel.from_backend(backend)
             coup = backend.configuration().coupling_map
-            #noise_model = noiser()
-            print("Simulating with noise and "+ str(shots) + " shots.")
-            estimator = AerEstimator(backend_options={"method": "density_matrix","coupling_map": coup,"noise_model": noise_model}, run_options={"shots": shots})
-            #estimator = AerEstimator(backend_options={"method": "density_matrix","noise_model": noise_model}, run_options={"shots": shots})
-
+            #noise_model = noiser(0.001)
+            if not error_mitigation:
+                print("Running without error mitigation.")
+                estimator = AerEstimator(backend_options={"method": "density_matrix","coupling_map": coup,"noise_model": noise_model}, run_options={"shots": shots})
+                #estimator = AerEstimator(backend_options={"method": "density_matrix","noise_model": noise_model}, run_options={"shots": shots})
+            if error_mitigation == 'ZNE':
+                print("Running with ZNE.")
+                #estimator = AerSimulator(method='density_matrix',noise_model=noise_model)
+                estimator = AerSimulator.from_backend(backend)
 
 
 
@@ -287,7 +328,7 @@ class pVQD:
         #measure at time 0
         init_shift = self.shift
 
-        meas, err = self.measurements(estimator, sim_config)
+        meas, err = self.measurements(estimator, sim_config, error_mitigation, shots)
 
         log['S_z'].append(meas[0])
         log['S_z_err'].append(err[0])
@@ -304,7 +345,7 @@ class pVQD:
             print("=========================================")
             count = 0
             first_shifted_par = (self.parameters + self.shift).tolist()
-            log['initial_Cost_Functuion'].append(1-self.overlap_measurement(qc, first_shifted_par,estimator, proj).values[0].real)
+            log['initial_Cost_Functuion'].append(1-self.overlap_measurement(qc, first_shifted_par,estimator, proj, error_mitigation,shots))
 
 
             if optimizer == 'adam':
@@ -317,9 +358,9 @@ class pVQD:
             while curr_L > 0.00001 and count<max_iter:
 
                 if optimizer != 'spsa':
-                    L, grad = self.cost_and_gradient(qc, estimator, proj, s, sim_config)
+                    L, grad = self.cost_and_gradient(qc, estimator, proj, s, sim_config, error_mitigation, shots)
                 else:
-                    L, grad, a_k = self.cost_and_gradient_spsa(qc, estimator, proj, count + 1, sim_config)
+                    L, grad, a_k = self.cost_and_gradient_spsa(qc, estimator, proj, count + 1, sim_config, error_mitigation, shots)
                     self.shift = self.shift - a_k * grad
 
                 if optimizer ==  'gradient_descent':
@@ -328,9 +369,10 @@ class pVQD:
                 if optimizer == 'adam':
                     self.shift, m, v = self.adam_gradient(m, v, count, grad)
 
-                print("Gradient: ", grad)
-                print("Shifts: ", self.shift)
+                #print("Gradient: ", grad)
+                #print("Shifts: ", self.shift)
                 curr_L = L[0]
+                print("Optimization step: ", count)
                 print("Cost function: ", curr_L)
                 opt_curve['Cost'].append(L[0])
                 opt_curve['variance'].append(L[1])
@@ -338,7 +380,7 @@ class pVQD:
 
             print("Optimization steps required: ", count)
             self.parameters = self.parameters + self.shift
-            meas, errors = self.measurements(estimator, sim_config)
+            meas, errors = self.measurements(estimator, sim_config, error_mitigation, shots)
             log['S_z'].append(meas[0])
             log['S_z_err'].append(err[0])
             log['S_x'].append(meas[1])
@@ -352,8 +394,6 @@ class pVQD:
         with open(file_name, "w") as f:
             json.dump(log, f)
 
-        file_name = "data/optcurve.dat"
-        with open(file_name, "w") as f:
-            json.dump(opt_curve, f)
+
 
         return log
