@@ -16,14 +16,14 @@ magnetic_fields = [1/4, 1]
 s = np.pi/2
 learning_rate = 1
 time_step = 0.05
-n_time_steps = 4
+n_time_steps = 6
 #sim_config: global/local, noshots/shots/noise
 sim_config = ['global', 'noise']
 #error_mitigation : None/ZNE/PEC
-error_mitigation = 'ZNE'
+error_mitigation = "ZNE"
 #optimizer: gradient_descent/ADAM/SPSA
 optimizer = 'gradient_descent'
-shots = 8000
+shots = 20000
 
 
 num_parameters = ((depth+1)*n_spins+depth*(n_spins-1))
@@ -34,24 +34,7 @@ init_shift = np.ones(num_parameters)*0.01
 
 #running the algorithm
 algo = pVQD(trotter_evolution(n_spins, time_step, magnetic_fields), n_spins,init_parameters, init_shift, depth, magnetic_fields)
-data = algo.run(time_step, n_time_steps, sim_config, optimizer, error_mitigation, shots, learning_rate, s, 50)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+data = algo.run(time_step, n_time_steps, sim_config, optimizer, error_mitigation, shots, learning_rate, s, 20)
 
 
 

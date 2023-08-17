@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib.pyplot as plot
 import json
 
 from exactsimulation import *
@@ -13,7 +12,6 @@ from qiskit.quantum_info import SparsePauliOp, Pauli
 from qiskit_aer.primitives import Estimator as AerEstimator
 from qiskit.providers.aer.noise import NoiseModel
 from qiskit_ibm_provider import IBMProvider
-from qiskit.providers.fake_provider import FakeManilaV2, FakeVigo
 from qiskit_aer import AerSimulator
 
 def ei(i, n):
@@ -143,6 +141,7 @@ class pVQD:
         qc_z = QuantumCircuit(self.n_spins)
         qc_z = qc_z.compose(self.ansatz)
 
+
         if not error_mitigation:
             Z = SparsePauliOp.from_sparse_list([["Z", [i], 1] for i in range(self.n_spins)], self.n_spins)
             job_meas = estimator.run(qc_z, Z, self.parameters).result()
@@ -167,12 +166,12 @@ class pVQD:
             job_meas = estimator.run(qc_x, X, self.parameters).result()
             result.append(job_meas.values[0]/self.n_spins)
         if error_mitigation == "ZNE":
-            #Measuring base x
+            #Measuring in base x
             for i in range(self.n_spins):
                 qc_x.h(i)
                 qc_x.z(i)
-                zne_exp = zne_expectation(qc_x,self.parameters, estimator, shots)
-                result.append(zne_exp/self.n_spins)
+            zne_exp = zne_expectation(qc_x,self.parameters, estimator, shots)
+            result.append(zne_exp/self.n_spins)
 
         if sim_config[1] != 'noshots' and not error_vec:
             meta = job_meas.metadata[0]
@@ -297,19 +296,19 @@ class pVQD:
             estimator = AerEstimator(run_options={"shots": shots}, approximation = False)
         if sim_config[1] == 'noise':
             print("Simulating with noise and "+ str(shots) + " shots.")
-            provider = IBMProvider()
-            backend = provider.get_backend('ibm_lagos')
-            noise_model = NoiseModel.from_backend(backend)
-            coup = backend.configuration().coupling_map
-            #noise_model = noiser(0.001)
+            #provider = IBMProvider()
+            #backend = provider.get_backend('ibm_lagos')
+            #noise_model = NoiseModel.from_backend(backend)
+            #coup = backend.configuration().coupling_map
+            noise_model = noiser(1e-3, 1e-3, 1e-3)
             if not error_mitigation:
                 print("Running without error mitigation.")
-                estimator = AerEstimator(backend_options={"method": "density_matrix","coupling_map": coup,"noise_model": noise_model}, run_options={"shots": shots})
-                #estimator = AerEstimator(backend_options={"method": "density_matrix","noise_model": noise_model}, run_options={"shots": shots})
+                #estimator = AerEstimator(backend_options={"method": "density_matrix","coupling_map": coup,"noise_model": noise_model}, run_options={"shots": shots})
+                estimator = AerEstimator(backend_options={"method": "density_matrix","noise_model": noise_model}, run_options={"shots": shots})
             if error_mitigation == 'ZNE':
                 print("Running with ZNE.")
-                #estimator = AerSimulator(method='density_matrix',noise_model=noise_model)
-                estimator = AerSimulator.from_backend(backend)
+                estimator = AerSimulator(method='density_matrix',noise_model=noise_model)
+                #estimator = AerSimulator.from_backend(backend)
 
 
 
@@ -345,7 +344,10 @@ class pVQD:
             print("=========================================")
             count = 0
             first_shifted_par = (self.parameters + self.shift).tolist()
-            log['initial_Cost_Functuion'].append(1-self.overlap_measurement(qc, first_shifted_par,estimator, proj, error_mitigation,shots))
+            if not error_mitigation:
+                log['initial_Cost_Functuion'].append(1-self.overlap_measurement(qc, first_shifted_par,estimator, proj, error_mitigation,shots).values[0].real)
+            if error_mitigation == "ZNE":
+                log['initial_Cost_Functuion'].append(1-self.overlap_measurement(qc, first_shifted_par,estimator, proj, error_mitigation,shots))
 
 
             if optimizer == 'adam':
@@ -391,9 +393,9 @@ class pVQD:
             log['Parameters'].append(list(self.parameters))
 
         file_name = "data/"+sim_config[0] + "_" + sim_config[1] + "_" + str(n_time_steps) +"_steps_"+optimizer+".dat"
+        #file_name = "data/"+sim_config[0] + "_" + sim_config[1] + "_" + str(n_time_steps) +"_steps_"+optimizer+"_ZNE_real_noise.dat"
         with open(file_name, "w") as f:
             json.dump(log, f)
-
 
 
         return log
